@@ -1,0 +1,73 @@
+name: Build and publish Windows release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Validate release version
+        shell: pwsh
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v(\d+\.\d+\.\d+(?:\.\d+)?)$') {
+            throw 'Release tags must be v plus a numeric version, for example v1.1.0.'
+          }
+          $tagVersion = $Matches[1]
+          [xml] $project = Get-Content modern_ui/ETS2DayNightModern.csproj
+          if ([string] $project.Project.PropertyGroup.Version -ne $tagVersion) {
+            throw 'The tag version must match the project Version.'
+          }
+
+      - name: Verify interface and clock regressions
+        shell: pwsh
+        run: |
+          dotnet run --project tests/SliderInteraction/SliderInteraction.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { throw 'Interface regression checks failed.' }
+          dotnet run --project tests/GameTimeResolution/GameTimeResolution.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { throw 'Clock regression checks failed.' }
+
+      - name: Verify updater with isolated test applications
+        shell: pwsh
+        run: |
+          foreach ($marker in @('old', 'new', 'failed')) {
+            dotnet publish tests/SoftwareUpdateDummy/SoftwareUpdateDummy.csproj -c Release "-p:DummyMarker=$marker" -o "_case/update_dummy/$marker"
+            if ($LASTEXITCODE -ne 0) { throw 'Dummy build failed.' }
+          }
+          dotnet run --project tests/SoftwareUpdate/SoftwareUpdate.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { throw 'Updater regression checks failed.' }
+
+      - name: Build executable and update manifest
+        shell: pwsh
+        run: |
+          dotnet publish modern_ui/ETS2DayNightModern.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o artifacts
+          if ($LASTEXITCODE -ne 0) { throw 'Publish failed.' }
+          Copy-Item -LiteralPath 'artifacts/ETS2昼夜切换.exe' -Destination artifacts/ETS2DayNight-win-x64.exe
+          ./scripts/New-UpdateManifest.ps1 -ExecutablePath artifacts/ETS2DayNight-win-x64.exe -DownloadUrl "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:RELEASE_TAG/ETS2DayNight-win-x64.exe" -OutputPath artifacts/update.json -Notes '新增圆角界面与过渡动画，支持后台检查下载和重启更新；隐藏更新源和自动检查选项。'
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$env:RELEASE_TAG" artifacts/ETS2DayNight-win-x64.exe artifacts/update.json --verify-tag --latest --title "ETS2 昼夜切换 $env:RELEASE_TAG" --notes-file .github/release-notes.md
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub release creation failed.' }
