@@ -1,0 +1,206 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Styles.Resources>
+    <SolidColorBrush x:Key="PageBrush" Color="#09090B" />
+    <SolidColorBrush x:Key="CardBrush" Color="#141416" />
+    <SolidColorBrush x:Key="RaisedBrush" Color="#1D1D20" />
+    <SolidColorBrush x:Key="LineBrush" Color="#18FFFFFF" />
+    <SolidColorBrush x:Key="TextBrush" Color="#F1F0F2" />
+    <SolidColorBrush x:Key="MutedBrush" Color="#A09DA7" />
+    <SolidColorBrush x:Key="SubtleBrush" Color="#77747F" />
+    <SolidColorBrush x:Key="AccentBrush" Color="#BDA2ED" />
+    <SolidColorBrush x:Key="BrandBrush" Color="#7B5BC7" />
+    <FontFamily x:Key="TransportFont">avares://ETS2昼夜切换/Assets/Fonts#Find Sans Pro, Microsoft YaHei UI</FontFamily>
+    <SolidColorBrush x:Key="SliderTrackFill" Color="#343139" />
+    <SolidColorBrush x:Key="SliderTrackFillPointerOver" Color="#433D4D" />
+    <SolidColorBrush x:Key="SliderTrackFillPressed" Color="#433D4D" />
+    <SolidColorBrush x:Key="SliderTrackValueFill" Color="#9472D8" />
+    <SolidColorBrush x:Key="SliderTrackValueFillPointerOver" Color="#AC88EC" />
+    <SolidColorBrush x:Key="SliderTrackValueFillPressed" Color="#BD9CF3" />
+    <SolidColorBrush x:Key="SliderThumbBackground" Color="#E3D6F9" />
+    <SolidColorBrush x:Key="SliderThumbBackgroundPointerOver" Color="#F1E9FF" />
+    <SolidColorBrush x:Key="SliderThumbBackgroundPressed" Color="#FFFFFF" />
+  </Styles.Resources>
+  <Style Selector="Window">
+    <Setter Property="FontFamily" Value="{DynamicResource TransportFont}" />
+    <Setter Property="FontSize" Value="14" />
+    <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+    <Setter Property="Background" Value="{DynamicResource PageBrush}" />
+  </Style>
+  <Style Selector="Border.card">
+    <Setter Property="Background" Value="{DynamicResource CardBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="16" />
+  </Style>
+  <Style Selector="TextBlock.caption">
+    <Setter Property="Foreground" Value="{DynamicResource MutedBrush}" />
+    <Setter Property="FontSize" Value="12" />
+  </Style>
+  <Style Selector="TextBlock.section">
+    <Setter Property="FontSize" Value="14" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+  </Style>
+  <Style Selector="Button.preset">
+    <Setter Property="Background" Value="{DynamicResource CardBrush}" />
+    <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="12" />
+    <Setter Property="Padding" Value="14,13" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Setter Property="Cursor" Value="Hand" />
+  </Style>
+  <Style Selector="Button.preset.selected">
+    <Setter Property="Background" Value="#282033" />
+    <Setter Property="BorderBrush" Value="#8B68B9" />
+  </Style>
+  <Style Selector="Button.preset:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#25212D" />
+    <Setter Property="BorderBrush" Value="#71558F" />
+    <Setter Property="Foreground" Value="#FFFFFF" />
+  </Style>
+  <Style Selector="Button.preset:pressed /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#392C4E" />
+    <Setter Property="BorderBrush" Value="#B99ADD" />
+    <Setter Property="Foreground" Value="#FFFFFF" />
+  </Style>
+  <Style Selector="Button.restore">
+    <Setter Property="Background" Value="{DynamicResource RaisedBrush}" />
+    <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="10" />
+    <Setter Property="Padding" Value="16,12" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    <Setter Property="Cursor" Value="Hand" />
+  </Style>
+  <Style Selector="Button.restore:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#28252F" />
+    <Setter Property="BorderBrush" Value="#685679" />
+  </Style>
+  <Style Selector="Button.restore:pressed /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#30283E" />
+    <Setter Property="BorderBrush" Value="#9F7BCC" />
+  </Style>
+  <Style Selector="Slider.time">
+    <Setter Property="Background" Value="#343139" />
+    <Setter Property="Foreground" Value="#9472D8" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="MinHeight" Value="36" />
+  </Style>
+  <Style Selector="Button.windowControl">
+    <Setter Property="Width" Value="40" />
+    <Setter Property="Height" Value="34" />
+    <Setter Property="MinHeight" Value="0" />
+    <Setter Property="MinWidth" Value="0" />
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Foreground" Value="#A09DA7" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="CornerRadius" Value="6" />
+    <Setter Property="HorizontalContentAlignment" Value="Center" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+  </Style>
+  <Style Selector="Button.windowControl:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#28252F" />
+    <Setter Property="Foreground" Value="#F1F0F2" />
+  </Style>
+  <Style Selector="Button.windowControl:pointerover">
+    <Setter Property="Foreground" Value="#FFFFFF" />
+  </Style>
+  <Style Selector="Button.windowControl:pressed">
+    <Setter Property="Foreground" Value="#FFFFFF" />
+  </Style>
+  <Style Selector="Button.windowControl:pressed /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#342D40" />
+    <Setter Property="Foreground" Value="#FFFFFF" />
+  </Style>
+  <Style Selector="Button.windowControl.close:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#C74452" />
+    <Setter Property="Foreground" Value="#FFFFFF" />
+  </Style>
+  <Style Selector="Button.windowControl.close:pressed /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#A4303D" />
+    <Setter Property="Foreground" Value="#FFFFFF" />
+  </Style>
+  <Style Selector="Button.updateAction">
+    <Setter Property="Height" Value="36" />
+    <Setter Property="MinWidth" Value="88" />
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="Padding" Value="16,0" />
+    <Setter Property="CornerRadius" Value="10" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="Background" Value="#25222C" />
+    <Setter Property="BorderBrush" Value="#48404F" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="Foreground" Value="#D9D3E2" />
+  </Style>
+  <Style Selector="Button.updateAction:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#302939" />
+    <Setter Property="BorderBrush" Value="#76608F" />
+    <Setter Property="Foreground" Value="#FFFFFF" />
+  </Style>
+  <Style Selector="Button.updateAction:pressed /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#392D48" />
+    <Setter Property="BorderBrush" Value="#9B7AC2" />
+  </Style>
+  <Style Selector="Button.updatePrimary">
+    <Setter Property="Background" Value="#7252AA" />
+    <Setter Property="Foreground" Value="#FFFFFF" />
+    <Setter Property="BorderBrush" Value="#8867BD" />
+  </Style>
+  <Style Selector="Button.updatePrimary:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#8463BC" />
+    <Setter Property="Foreground" Value="#FFFFFF" />
+    <Setter Property="BorderBrush" Value="#A584D6" />
+  </Style>
+  <Style Selector="Button.updatePrimary:pressed /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="#624591" />
+    <Setter Property="Foreground" Value="#FFFFFF" />
+    <Setter Property="BorderBrush" Value="#8867BD" />
+  </Style>
+  <!-- The window adds .motion only while Windows UI animations are enabled. -->
+  <Style Selector="Window.motion Button.updateAction /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Transitions">
+      <Transitions>
+        <BrushTransition Property="Background" Duration="0:0:0.14" />
+        <BrushTransition Property="BorderBrush" Duration="0:0:0.14" />
+        <BrushTransition Property="Foreground" Duration="0:0:0.10" />
+      </Transitions>
+    </Setter>
+  </Style>
+  <Style Selector="Window.motion Button.preset /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Transitions">
+      <Transitions>
+        <BrushTransition Property="Background" Duration="0:0:0.16" />
+        <BrushTransition Property="BorderBrush" Duration="0:0:0.16" />
+        <BrushTransition Property="Foreground" Duration="0:0:0.12" />
+        <DoubleTransition Property="Opacity" Duration="0:0:0.10" />
+      </Transitions>
+    </Setter>
+  </Style>
+  <Style Selector="Window.motion Button.preset:pressed /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Opacity" Value="0.88" />
+  </Style>
+  <Style Selector="Window.motion Button.restore /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Transitions">
+      <Transitions>
+        <BrushTransition Property="Background" Duration="0:0:0.14" />
+        <BrushTransition Property="BorderBrush" Duration="0:0:0.14" />
+      </Transitions>
+    </Setter>
+  </Style>
+  <Style Selector="Window.motion Button.windowControl /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Transitions">
+      <Transitions>
+        <BrushTransition Property="Background" Duration="0:0:0.10" />
+        <BrushTransition Property="Foreground" Duration="0:0:0.10" />
+      </Transitions>
+    </Setter>
+  </Style>
+</Styles>

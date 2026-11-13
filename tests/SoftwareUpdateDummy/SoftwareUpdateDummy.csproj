@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Dummy</AssemblyName>
+    <PublishSingleFile>true</PublishSingleFile>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <DummyMarker Condition="'$(DummyMarker)' == ''">old</DummyMarker>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="DummyMarker" Value="$(DummyMarker)" />
+  </ItemGroup>
+</Project>

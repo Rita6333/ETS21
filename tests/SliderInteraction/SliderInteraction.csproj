@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <RootNamespace>ETS2DayNightModern</RootNamespace>
+    <AssemblyName>ETS2昼夜切换</AssemblyName>
+    <Version>1.1.0</Version>
+    <MainWindowCodeBehind Condition="'$(MainWindowCodeBehind)' == ''">../../modern_ui/MainWindow.axaml.cs</MainWindowCodeBehind>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Headless" Version="11.2.5" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.5" />
+    <PackageReference Include="Avalonia.Skia" Version="11.2.5" />
+    <Compile Include="$(MainWindowCodeBehind)" Link="MainWindow.axaml.cs" />
+    <Compile Include="../../modern_ui/MainWindow.Animations.cs" Link="MainWindow.Animations.cs" />
+    <Compile Include="../../modern_ui/MainWindow.Updates.cs" Link="MainWindow.Updates.cs" />
+    <Compile Include="../../modern_ui/UpdateService.cs" Link="UpdateService.cs" />
+    <Compile Include="../../modern_ui/UpdateInstaller.cs" Link="UpdateInstaller.cs" />
+    <AvaloniaXaml Include="../../modern_ui/MainWindow.axaml" Link="MainWindow.axaml" />
+    <AvaloniaXaml Include="../../modern_ui/Styles/TransportTheme.axaml" Link="Styles/TransportTheme.axaml" />
+    <AvaloniaResource Include="../../modern_ui/Assets/**/*" Link="Assets/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

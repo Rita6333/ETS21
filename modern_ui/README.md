@@ -1,0 +1,41 @@
+# ETS2昼夜切换 · Modern UI
+
+这是独立的 Avalonia + FluentAvalonia 版本，不使用原来的纯 Win32 自绘窗口。
+
+## 视觉与技术
+
+- Avalonia 11.2.5 + FluentAvaloniaUI 2.3.0；采用暗色 Fluent 控件主题。
+- 界面参考本地 Eternal Transport 桌面客户端：石墨黑背景、紫色强调、细边框卡片与 Find Sans Pro 字体，搭配中文系统字体。界面不使用卡车图片。
+- 双列展示真实游戏时间和当前环境；时间选择、四个快捷时刻、恢复操作按使用顺序排列，不再显示宣传标题、连接徽章和底部状态栏。
+- 自定义暗色窗口栏使用原程序的头像 Logo，支持拖动、双击最大化 / 还原、最小化和关闭；保留边缘缩放及 Alt+F4，右键标题栏或 Alt+空格可打开系统菜单。
+- 窗口外框与标题栏采用 8 DIP 圆角，最大化或全屏时归零；Windows 11 保留原生窗口圆角。更新操作按钮统一圆角、尺寸及过渡效果。
+- 选择预设时会高亮对应卡片；拖动时同步显示当前时间段。最小窗口尺寸为 620 × 580，内容区支持滚动；操作失败时临时显示错误提示。
+- 游戏时间/环境写入封装在 `GameTimeService`，UI 不直接接触内存细节。
+- 真实游戏时间优先从当前游戏代码动态定位并缓存读取地址，兼容 1.62.3.2 中时钟地址移动的情况；环境锁定时间与真实时钟独立显示。
+- 切换时暂停 ETS2 线程、完成一次性写入并刷新指令缓存，避免半条指令导致闪烁。
+- 滑块拖动只更新预览，松开后才提交一次切换；状态轮询为 1 秒。
+- 滑块仅在按住鼠标左键时拖动，松开后停止跟随；窗口失焦或鼠标捕获中断时取消拖动。
+- 启动与环境切换加入淡入，按钮悬停、按下和选中高亮平滑过渡；遵守 Windows 系统动画开关，不移动滑块命中位置。
+- v1.1.0 内置 GitHub Releases 自动更新：启动时与每 6 小时检查，后台下载并校验，用户点击“重启更新”安装；支持取消、缓存复用、安装备份和启动失败回退。更新源与自动检查选项默认隐藏。发布步骤见 [UPDATES.md](UPDATES.md)。
+
+## 运行
+
+直接运行发布目录中的：
+
+```text
+dist/ETS2昼夜切换现代版/ETS2昼夜切换.exe
+```
+
+首次点击切换或恢复时会请求管理员权限。启动 ETS2 后，点击清晨、白天、黄昏、夜晚，或者拖动滑块后松开即可应用。
+
+## 构建
+
+使用本地 .NET 8 SDK：
+
+```powershell
+dotnet restore modern_ui/ETS2DayNightModern.csproj
+dotnet publish modern_ui/ETS2DayNightModern.csproj -c Release -r win-x64 --self-contained true `
+  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+```
+
+产物为 Windows x64 自包含单文件，不要求目标机预装 .NET。
