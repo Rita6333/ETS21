@@ -149,7 +149,7 @@ public partial class MainWindow
             {
                 _downloadedUpdate = null;
                 ResetUpdateAnnouncement();
-                UpdateStatusText.Text = "已经是最新版本。";
+                UpdateStatusText.Text = "当前为最新版本。";
                 return;
             }
             ShowUpdateNotes(release);

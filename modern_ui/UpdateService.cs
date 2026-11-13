@@ -3,6 +3,7 @@ using System.Net;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace ETS2DayNightModern;
 
@@ -29,6 +30,8 @@ public sealed class UpdateService : IDisposable
     public const string DefaultManifestUrl = "https://github.com/Rita6333/ETS21/releases/latest/download/update.json";
     public const long MaximumDownloadBytes = 200L * 1024 * 1024;
     private const int MaximumManifestBytes = 64 * 1024;
+    private const int MaximumReleaseMetadataBytes = 256 * 1024;
+    private const string LatestReleaseApi = "https://api.github.com/repos/Rita6333/ETS21/releases/latest";
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -85,9 +88,9 @@ public sealed class UpdateService : IDisposable
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
         try
         {
-            using var response = await GetAsync(new Uri(source), timeout.Token).ConfigureAwait(false);
+            using var response = await GetManifestAsync(source, timeout.Token).ConfigureAwait(false);
             if (response.StatusCode == HttpStatusCode.NotFound)
-                throw new InvalidOperationException("更新源尚未发布版本，请稍后重试。");
+                throw new InvalidOperationException("无法获取更新信息，请稍后重试。");
             response.EnsureSuccessStatusCode();
             if (response.Content.Headers.ContentLength > MaximumManifestBytes)
                 throw new InvalidDataException("更新清单过大。");
@@ -114,6 +117,40 @@ public sealed class UpdateService : IDisposable
         { throw new TimeoutException("检查更新超时，请稍后重试。"); }
         catch (JsonException exception)
         { throw new InvalidDataException("更新清单格式错误。", exception); }
+    }
+
+    private async Task<HttpResponseMessage> GetManifestAsync(string source, CancellationToken token)
+    {
+        var response = await GetAsync(new Uri(source), token, revalidate: true).ConfigureAwait(false);
+        if (response.StatusCode != HttpStatusCode.NotFound || source != DefaultManifestUrl)
+            return response;
+        response.Dispose();
+
+        // GitHub's latest asset route can briefly retain a 404 after publishing.
+        // Resolve the official release once, then fetch that release's exact asset.
+        using var metadataResponse = await GetAsync(new Uri(LatestReleaseApi), token, revalidate: true).ConfigureAwait(false);
+        if (metadataResponse.StatusCode == HttpStatusCode.NotFound)
+            throw new InvalidOperationException("无法获取更新信息，请稍后重试。");
+        metadataResponse.EnsureSuccessStatusCode();
+        if (metadataResponse.Content.Headers.ContentLength > MaximumReleaseMetadataBytes)
+            throw new InvalidDataException("更新版本信息过大。");
+        await using var metadataStream = await metadataResponse.Content.ReadAsStreamAsync(token).ConfigureAwait(false);
+        using var body = new MemoryStream();
+        await CopyLimitedAsync(metadataStream, body, MaximumReleaseMetadataBytes, null, null, token).ConfigureAwait(false);
+        var release = JsonSerializer.Deserialize<GitHubRelease>(body.ToArray(), JsonOptions);
+        if (release is null || release.Draft != false || release.Prerelease != false ||
+            string.IsNullOrWhiteSpace(release.TagName) || release.Assets is null)
+            throw new InvalidDataException("无法读取正式更新版本，请稍后重试。");
+        var assets = release.Assets.Where(asset => asset.Name == "update.json").ToArray();
+        if (assets.Length != 1)
+            throw new InvalidDataException("无法获取更新清单，请稍后重试。");
+        var assetUrl = ValidateHttpsUrl(assets[0].BrowserDownloadUrl);
+        var expected = new Uri("https://github.com/Rita6333/ETS21/releases/download/" +
+            Uri.EscapeDataString(release.TagName) + "/update.json");
+        if (assetUrl.AbsoluteUri != expected.AbsoluteUri)
+            throw new InvalidDataException("更新版本返回的清单地址无效。");
+        EnsureSourceUnchanged(source);
+        return await GetAsync(assetUrl, token, revalidate: true).ConfigureAwait(false);
     }
 
     public async Task<DownloadedUpdate> DownloadAsync(UpdateRelease release,
@@ -221,12 +258,14 @@ public sealed class UpdateService : IDisposable
         return uri;
     }
 
-    private async Task<HttpResponseMessage> GetAsync(Uri url, CancellationToken token)
+    private async Task<HttpResponseMessage> GetAsync(Uri url, CancellationToken token, bool revalidate = false)
     {
         for (var hop = 0; hop < 8; hop++)
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
             request.Headers.UserAgent.ParseAdd("ETS2DayNight/" + CurrentVersion);
+            if (revalidate)
+                request.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
             var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
             if ((int)response.StatusCode is not (301 or 302 or 303 or 307 or 308))
             {
@@ -300,5 +339,21 @@ public sealed class UpdateService : IDisposable
         public string Sha256 { get; init; } = "";
         public long? Size { get; init; }
         public string Notes { get; init; } = "";
+    }
+
+    private sealed class GitHubRelease
+    {
+        [JsonPropertyName("tag_name")]
+        public string TagName { get; init; } = "";
+        public bool? Draft { get; init; }
+        public bool? Prerelease { get; init; }
+        public GitHubAsset[]? Assets { get; init; }
+    }
+
+    private sealed class GitHubAsset
+    {
+        public string Name { get; init; } = "";
+        [JsonPropertyName("browser_download_url")]
+        public string BrowserDownloadUrl { get; init; } = "";
     }
 }

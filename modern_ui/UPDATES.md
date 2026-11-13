@@ -8,6 +8,8 @@ https://github.com/Rita6333/ETS21/releases/latest/download/update.json
 
 在窗口栏的“软件更新”中可手动检查更新、开关后台下载。更新源地址与自动检查选项按用户要求隐藏；默认启动时和每 6 小时自动检查新版本。发现新版后在后台下载，完成后点击“重启更新”替换程序。检查或下载不会中断游戏操作。后台检查失败保持安静，手动检查会显示具体原因。
 
+检查成功且没有更高版本时显示“当前为最新版本”。GitHub 的 `latest` 下载入口返回 404 时，会查询该仓库最新正式 Release 的 `update.json` 资源并重试；仍无法获取时显示检查失败，可点击“检查更新”重试。
+
 ## 使用 GitHub 自动发布
 
 仓库已提供 `.github/workflows/release.yml`。更新项目中的版本号与 `.github/release-notes.md` 后，提交源码并推送对应版本标签，例如：

@@ -64,6 +64,8 @@ internal static partial class Program
             ("update settings save and manual check uses configured source", UpdateSettingsSave),
             ("background download shows restart and missing cache can download again", UpdateReady),
             ("unpublished update source keeps the app usable", UnpublishedUpdateSource),
+            ("failed update check can retry and show current version is latest", UpdateCheckRetry),
+            ("update action labels are centered in their buttons", UpdateButtonAlignment),
         ];
 
         var failures = 0;
@@ -98,6 +100,7 @@ internal static partial class Program
             ("waiting", false, GameState.Empty),
             ("updates", false, GameState.Empty),
             ("updates-minimum", true, GameState.Empty),
+            ("updates-latest", false, GameState.Empty),
             ("update-ready", false, GameState.Empty),
         ];
         try
@@ -115,6 +118,12 @@ internal static partial class Program
                         Click(fixture, "CheckUpdatesButton");
                         WaitFor(() => fixture.Window.FindControl<Button>("InstallUpdateButton")!.Content?.ToString() == "重启更新",
                             "update preview was not downloaded");
+                    }
+                    else if (scene.Name == "updates-latest")
+                    {
+                        Click(fixture, "CheckUpdatesButton");
+                        WaitFor(() => fixture.Window.FindControl<TextBlock>("UpdateStatusText")!.Text == "当前为最新版本。",
+                            "latest version preview did not finish checking");
                     }
                 }
                 PumpFor(TimeSpan.FromMilliseconds(400));
@@ -415,7 +424,7 @@ internal static partial class Program
         public Fixture(bool useMinimumSize = false)
         {
             _updateClient = new HttpClient(UpdateHandler);
-            Window = new MainWindow([], new UpdateService(_updateClient, _updateDirectory, new Version(1, 1, 0)));
+            Window = new MainWindow([], new UpdateService(_updateClient, _updateDirectory, new Version(1, 1, 1)));
             Service = GameTimeService.Latest;
             if (useMinimumSize)
             {

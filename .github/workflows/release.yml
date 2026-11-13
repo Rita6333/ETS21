@@ -62,7 +62,7 @@ jobs:
           dotnet publish modern_ui/ETS2DayNightModern.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o artifacts
           if ($LASTEXITCODE -ne 0) { throw 'Publish failed.' }
           Copy-Item -LiteralPath 'artifacts/ETS2昼夜切换.exe' -Destination artifacts/ETS2DayNight-win-x64.exe
-          ./scripts/New-UpdateManifest.ps1 -ExecutablePath artifacts/ETS2DayNight-win-x64.exe -DownloadUrl "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:RELEASE_TAG/ETS2DayNight-win-x64.exe" -OutputPath artifacts/update.json -Notes '新增圆角界面与过渡动画，支持后台检查下载和重启更新；隐藏更新源和自动检查选项。'
+          ./scripts/New-UpdateManifest.ps1 -ExecutablePath artifacts/ETS2DayNight-win-x64.exe -DownloadUrl "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:RELEASE_TAG/ETS2DayNight-win-x64.exe" -OutputPath artifacts/update.json -Notes '修复更新检查提示：无新版本时显示当前为最新版本，GitHub 更新入口临时不可用时自动回退重查。'
 
       - name: Publish GitHub Release
         shell: pwsh

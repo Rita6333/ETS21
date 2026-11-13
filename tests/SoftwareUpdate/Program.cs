@@ -28,7 +28,9 @@ internal static class Program
             ("mismatched and excessive declared lengths are refused", DownloadLengths),
             ("cancelled downloads leave no executable", Cancellation),
             ("changing source invalidates an old release", SourceChange),
-            ("unpublished release has a clear status", Unpublished),
+            ("missing custom manifest reports a retrieval failure without GitHub fallback", Unpublished),
+            ("GitHub latest 404 resolves the official release asset and compares versions", GitHubFallback),
+            ("GitHub fallback errors and foreign assets never report latest", GitHubFallbackFailures),
             ("installer script parses and safely quotes paths", InstallerScript),
             ("failed or cancelled helper never commits an installation", InstallerHandshakeFailure),
             ("installer replaces, rolls back and rejects corrupt files in an isolated directory", InstallerIntegration),
@@ -177,8 +179,69 @@ internal static class Program
     {
         using var fixture = new Fixture(_ => new HttpResponseMessage(HttpStatusCode.NotFound));
         try { await fixture.Service.CheckAsync(); throw new Exception("404 was ignored"); }
-        catch (InvalidOperationException exception) { Assert(exception.Message.Contains("尚未发布"), "404 message unclear"); }
+        catch (InvalidOperationException exception)
+        {
+            Assert(exception.Message.Contains("无法获取更新信息"), "404 message unclear");
+            Assert(!exception.Message.Contains("尚未发布"), "404 falsely claimed no release exists");
+        }
+        Assert(fixture.Handler.Calls == 1, "custom source unexpectedly queried GitHub");
     }
+
+    private const string GitHubReleaseApi = "https://api.github.com/repos/Rita6333/ETS21/releases/latest";
+    private const string GitHubManifest = "https://github.com/Rita6333/ETS21/releases/download/v2.0.0/update.json";
+
+    private static async Task GitHubFallback()
+    {
+        using var fixture = new Fixture(request =>
+        {
+            Assert(request.Headers.CacheControl?.NoCache == true, "version lookup allowed a cached response");
+            return request.RequestUri!.AbsoluteUri switch
+            {
+                UpdateService.DefaultManifestUrl => new HttpResponseMessage(HttpStatusCode.NotFound),
+                GitHubReleaseApi => GitHubMetadata(),
+                GitHubManifest => Manifest("2.0.0"),
+                _ => throw new Exception("Unexpected fallback request: " + request.RequestUri)
+            };
+        });
+        fixture.Service.SaveSettings(new UpdateSettings());
+        var release = await fixture.Service.CheckAsync();
+        Assert(release?.Version == "2.0.0", "fallback missed the published version");
+        Assert(release?.SourceUrl == UpdateService.DefaultManifestUrl, "fallback changed the configured source identity");
+        Assert(fixture.Handler.Calls == 3, "fallback did not query exactly one API and explicit asset");
+        using var current = new UpdateService(fixture.Client, fixture.Directory, new Version(2, 0, 0));
+        Assert(await current.CheckAsync() is null, "current version was not recognized through fallback");
+        Assert(fixture.Handler.Calls == 6, "current-version fallback made unexpected requests");
+    }
+
+    private static async Task GitHubFallbackFailures()
+    {
+        foreach (var failure in new[] { "api404", "asset404", "foreignAsset", "missingAsset", "metadataTooLarge" })
+        {
+            using var fixture = new Fixture(request => request.RequestUri!.AbsoluteUri switch
+            {
+                UpdateService.DefaultManifestUrl => new HttpResponseMessage(HttpStatusCode.NotFound),
+                GitHubReleaseApi => failure switch
+                {
+                    "api404" => new HttpResponseMessage(HttpStatusCode.NotFound),
+                    "foreignAsset" => GitHubMetadata("https://foreign.example.test/update.json"),
+                    "missingAsset" => TextResponse("{\"tag_name\":\"v2.0.0\",\"draft\":false,\"prerelease\":false,\"assets\":[]}"),
+                    "metadataTooLarge" => TextResponse(new string(' ', 256 * 1024 + 1)),
+                    _ => GitHubMetadata()
+                },
+                GitHubManifest => new HttpResponseMessage(HttpStatusCode.NotFound),
+                _ => throw new Exception("Unsafe fallback request: " + request.RequestUri)
+            });
+            fixture.Service.SaveSettings(new UpdateSettings());
+            await ThrowsAsync<Exception>(() => fixture.Service.CheckAsync());
+            Assert(fixture.Handler.Calls == (failure == "asset404" ? 3 : 2), failure + " retried or fetched an unsafe URL");
+        }
+    }
+
+    private static HttpResponseMessage GitHubMetadata(string assetUrl = GitHubManifest) => TextResponse(JsonSerializer.Serialize(new
+    {
+        tag_name = "v2.0.0", draft = false, prerelease = false,
+        assets = new[] { new { name = "update.json", browser_download_url = assetUrl } }
+    }));
 
     private static async Task InstallerScript()
     {

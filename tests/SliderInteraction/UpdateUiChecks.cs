@@ -6,6 +6,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Input;
+using Avalonia.VisualTree;
 using ETS2DayNightModern;
 
 internal static partial class Program
@@ -33,7 +34,7 @@ internal static partial class Program
         f.Window.FindControl<CheckBox>("AutoCheckUpdates")!.IsChecked = false;
         f.Window.FindControl<CheckBox>("AutoDownloadUpdates")!.IsChecked = false;
         Click(f, "CheckUpdatesButton");
-        WaitFor(() => f.Window.FindControl<TextBlock>("UpdateStatusText")!.Text == "已经是最新版本。", "manual update check did not finish");
+        WaitFor(() => f.Window.FindControl<TextBlock>("UpdateStatusText")!.Text == "当前为最新版本。", "manual update check did not finish");
         if (f.UpdateHandler.LastManifestUrl != "https://example.com/update.json")
             throw new InvalidOperationException("manual check did not use saved source");
         Click(f, "UpdateButton");
@@ -68,7 +69,7 @@ internal static partial class Program
         Click(f, "UpdateButton");
         Click(f, "CheckUpdatesButton");
         WaitFor(() => f.Window.FindControl<Button>("CheckUpdatesButton")!.IsEnabled, "failed check left UI busy");
-        if (f.Window.FindControl<TextBlock>("UpdateStatusText")!.Text?.Contains("尚未发布") != true)
+        if (f.Window.FindControl<TextBlock>("UpdateStatusText")!.Text?.Contains("无法获取更新信息") != true)
             throw new InvalidOperationException("missing release did not explain the failure");
         if (f.Window.FindControl<Button>("InstallUpdateButton")!.IsVisible)
             throw new InvalidOperationException("missing release offered an install");
@@ -76,9 +77,45 @@ internal static partial class Program
         TrackClick(f);
     }
 
+    private static void UpdateCheckRetry(Fixture f)
+    {
+        f.UpdateHandler.Unpublished = true;
+        Click(f, "UpdateButton");
+        Click(f, "CheckUpdatesButton");
+        WaitFor(() => f.Window.FindControl<Button>("CheckUpdatesButton")!.IsEnabled, "failed update check stayed busy");
+        if (f.Window.FindControl<TextBlock>("UpdateStatusText")!.Text == "当前为最新版本。")
+            throw new InvalidOperationException("network failure was reported as latest version");
+        f.UpdateHandler.Unpublished = false;
+        Click(f, "CheckUpdatesButton");
+        WaitFor(() => f.Window.FindControl<TextBlock>("UpdateStatusText")!.Text == "当前为最新版本。", "retry did not clear old update error");
+        if (f.Window.FindControl<Button>("InstallUpdateButton")!.IsVisible ||
+            f.Window.FindControl<ProgressBar>("UpdateProgressBar")!.IsVisible)
+            throw new InvalidOperationException("current version still offered an install or loading progress");
+    }
+
+    private static void UpdateButtonAlignment(Fixture f)
+    {
+        f.UpdateHandler.ReleaseVersion = "1.2.0";
+        Click(f, "UpdateButton");
+        Click(f, "CheckUpdatesButton");
+        WaitFor(() => f.Window.FindControl<Button>("InstallUpdateButton")!.IsEnabled &&
+            f.Window.FindControl<Button>("InstallUpdateButton")!.Content?.ToString() == "重启更新", "update button alignment fixture did not finish downloading");
+        f.Window.UpdateLayout();
+        foreach (var name in new[] { "CheckUpdatesButton", "InstallUpdateButton" })
+        {
+            var button = f.Window.FindControl<Button>(name)!;
+            var label = button.GetVisualDescendants().OfType<TextBlock>().Single();
+            var origin = label.TranslatePoint(default, button)!.Value;
+            var dx = origin.X + label.Bounds.Width / 2 - button.Bounds.Width / 2;
+            var dy = origin.Y + label.Bounds.Height / 2 - button.Bounds.Height / 2;
+            if (Math.Abs(dx) > 1 || Math.Abs(dy) > 1)
+                throw new InvalidOperationException($"{name} label is not centered: offset {dx:F1}, {dy:F1}");
+        }
+    }
+
     public sealed class UpdateHttpStub : HttpMessageHandler
     {
-        public string ReleaseVersion { get; set; } = "1.1.0";
+        public string ReleaseVersion { get; set; } = "1.1.1";
         public bool Unpublished { get; set; }
         public string? LastManifestUrl { get; private set; }
         public int Downloads { get; private set; }
