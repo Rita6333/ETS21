@@ -7,7 +7,7 @@
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <RootNamespace>ETS2DayNightModern</RootNamespace>
     <AssemblyName>ETS2昼夜切换</AssemblyName>
-    <Version>1.1.1</Version>
+    <Version>1.1.2</Version>
     <MainWindowCodeBehind Condition="'$(MainWindowCodeBehind)' == ''">../../modern_ui/MainWindow.axaml.cs</MainWindowCodeBehind>
   </PropertyGroup>
   <ItemGroup>

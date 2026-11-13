@@ -121,14 +121,15 @@ public sealed class UpdateService : IDisposable
 
     private async Task<HttpResponseMessage> GetManifestAsync(string source, CancellationToken token)
     {
-        var response = await GetAsync(new Uri(source), token, revalidate: true).ConfigureAwait(false);
+        var requestUrl = source == DefaultManifestUrl ? FreshLookupUrl(source) : new Uri(source);
+        var response = await GetAsync(requestUrl, token, revalidate: true).ConfigureAwait(false);
         if (response.StatusCode != HttpStatusCode.NotFound || source != DefaultManifestUrl)
             return response;
         response.Dispose();
 
         // GitHub's latest asset route can briefly retain a 404 after publishing.
         // Resolve the official release once, then fetch that release's exact asset.
-        using var metadataResponse = await GetAsync(new Uri(LatestReleaseApi), token, revalidate: true).ConfigureAwait(false);
+        using var metadataResponse = await GetAsync(FreshLookupUrl(LatestReleaseApi), token, revalidate: true).ConfigureAwait(false);
         if (metadataResponse.StatusCode == HttpStatusCode.NotFound)
             throw new InvalidOperationException("无法获取更新信息，请稍后重试。");
         metadataResponse.EnsureSuccessStatusCode();
@@ -152,6 +153,11 @@ public sealed class UpdateService : IDisposable
         EnsureSourceUnchanged(source);
         return await GetAsync(assetUrl, token, revalidate: true).ConfigureAwait(false);
     }
+
+    // Some intermediary caches ignore Cache-Control when serving GitHub's latest
+    // route. Refresh only these mutable lookup URLs; preserve the configured source
+    // identity and never rewrite explicit asset or signed redirect query strings.
+    private static Uri FreshLookupUrl(string url) => new(url + "?check=" + Guid.NewGuid().ToString("N"));
 
     public async Task<DownloadedUpdate> DownloadAsync(UpdateRelease release,
         IProgress<UpdateProgress>? progress = null, CancellationToken cancellationToken = default)

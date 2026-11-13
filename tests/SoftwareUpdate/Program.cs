@@ -30,6 +30,7 @@ internal static class Program
             ("changing source invalidates an old release", SourceChange),
             ("missing custom manifest reports a retrieval failure without GitHub fallback", Unpublished),
             ("GitHub latest 404 resolves the official release asset and compares versions", GitHubFallback),
+            ("GitHub rechecks use unique lookup URLs while preserving source and asset URLs", GitHubFreshLookup),
             ("GitHub fallback errors and foreign assets never report latest", GitHubFallbackFailures),
             ("installer script parses and safely quotes paths", InstallerScript),
             ("failed or cancelled helper never commits an installation", InstallerHandshakeFailure),
@@ -195,7 +196,7 @@ internal static class Program
         using var fixture = new Fixture(request =>
         {
             Assert(request.Headers.CacheControl?.NoCache == true, "version lookup allowed a cached response");
-            return request.RequestUri!.AbsoluteUri switch
+            return request.RequestUri!.GetLeftPart(UriPartial.Path) switch
             {
                 UpdateService.DefaultManifestUrl => new HttpResponseMessage(HttpStatusCode.NotFound),
                 GitHubReleaseApi => GitHubMetadata(),
@@ -217,7 +218,7 @@ internal static class Program
     {
         foreach (var failure in new[] { "api404", "asset404", "foreignAsset", "missingAsset", "metadataTooLarge" })
         {
-            using var fixture = new Fixture(request => request.RequestUri!.AbsoluteUri switch
+            using var fixture = new Fixture(request => request.RequestUri!.GetLeftPart(UriPartial.Path) switch
             {
                 UpdateService.DefaultManifestUrl => new HttpResponseMessage(HttpStatusCode.NotFound),
                 GitHubReleaseApi => failure switch
@@ -242,6 +243,49 @@ internal static class Program
         tag_name = "v2.0.0", draft = false, prerelease = false,
         assets = new[] { new { name = "update.json", browser_download_url = assetUrl } }
     }));
+
+    private static async Task GitHubFreshLookup()
+    {
+        var latestQueries = new HashSet<string>();
+        var metadataQueries = new HashSet<string>();
+        using var fixture = new Fixture(request =>
+        {
+            var url = request.RequestUri!;
+            switch (url.GetLeftPart(UriPartial.Path))
+            {
+                case UpdateService.DefaultManifestUrl:
+                    Assert(url.Query.StartsWith("?check=", StringComparison.Ordinal) && latestQueries.Add(url.Query),
+                        "repeated latest lookup can reuse stale cache");
+                    return new HttpResponseMessage(HttpStatusCode.NotFound);
+                case GitHubReleaseApi:
+                    Assert(url.Query.StartsWith("?check=", StringComparison.Ordinal) && metadataQueries.Add(url.Query),
+                        "repeated release API lookup can reuse stale cache");
+                    return GitHubMetadata();
+                case GitHubManifest:
+                    Assert(string.IsNullOrEmpty(url.Query), "explicit release asset URL was rewritten");
+                    return Redirect("https://release-assets.githubusercontent.com/update.json?signature=original&expires=123");
+                case "https://release-assets.githubusercontent.com/update.json":
+                    Assert(url.Query == "?signature=original&expires=123", "signed redirect query was rewritten");
+                    return Manifest("2.0.0");
+                default:
+                    throw new Exception("Unexpected nonce lookup URL: " + url);
+            }
+        });
+        fixture.Service.SaveSettings(new UpdateSettings());
+        for (var i = 0; i < 2; i++)
+        {
+            var release = await fixture.Service.CheckAsync();
+            Assert(release?.SourceUrl == UpdateService.DefaultManifestUrl, "nonce changed the configured source identity");
+        }
+        Assert(latestQueries.Count == 2 && metadataQueries.Count == 2, "lookup nonce was not unique per check");
+        fixture.Service.SaveSettings(new UpdateSettings { ManifestUrl = Source + "?channel=stable" });
+        fixture.Handler.Handle = request =>
+        {
+            Assert(request.RequestUri!.AbsoluteUri == Source + "?channel=stable", "custom source query was rewritten");
+            return Manifest("1.0.0");
+        };
+        Assert(await fixture.Service.CheckAsync() is null, "custom source check failed");
+    }
 
     private static async Task InstallerScript()
     {

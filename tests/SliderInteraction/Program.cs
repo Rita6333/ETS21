@@ -424,7 +424,7 @@ internal static partial class Program
         public Fixture(bool useMinimumSize = false)
         {
             _updateClient = new HttpClient(UpdateHandler);
-            Window = new MainWindow([], new UpdateService(_updateClient, _updateDirectory, new Version(1, 1, 1)));
+            Window = new MainWindow([], new UpdateService(_updateClient, _updateDirectory, new Version(1, 1, 2)));
             Service = GameTimeService.Latest;
             if (useMinimumSize)
             {
