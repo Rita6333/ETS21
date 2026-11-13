@@ -113,9 +113,58 @@ internal static partial class Program
         }
     }
 
+    private static void BackgroundCurrentVersion(Fixture f)
+    {
+        RunBackgroundUpdateCheck(f);
+        if (f.Window.FindControl<Border>("UpdateOverlay")!.IsVisible)
+            throw new InvalidOperationException("current version opened an automatic update prompt");
+        if (f.Window.FindControl<TextBlock>("UpdateStatusText")!.Text != "当前为最新版本。")
+            throw new InvalidOperationException("background current-version check did not finish");
+    }
+
+    private static void BackgroundUpdateFailure(Fixture f)
+    {
+        f.UpdateHandler.Unpublished = true;
+        RunBackgroundUpdateCheck(f);
+        if (f.Window.FindControl<Border>("UpdateOverlay")!.IsVisible)
+            throw new InvalidOperationException("a background network failure opened the update panel");
+        if (f.Window.FindControl<TextBlock>("UpdateStatusText")!.Text?.Contains("无法获取更新信息") != true)
+            throw new InvalidOperationException("background failure status was not retained");
+    }
+
+    private static void BackgroundUpdatePrompt(Fixture f)
+    {
+        var overlay = f.Window.FindControl<Border>("UpdateOverlay")!;
+        f.UpdateHandler.ReleaseVersion = "1.2.0";
+        RunBackgroundUpdateCheck(f);
+        if (!overlay.IsVisible || f.Window.FindControl<TextBlock>("UpdateNotesText")!.Text != "界面动画与软件更新。")
+            throw new InvalidOperationException("new version did not show its automatic update prompt and notes");
+        Click(f, "UpdateButton");
+        RunBackgroundUpdateCheck(f);
+        if (overlay.IsVisible)
+            throw new InvalidOperationException("dismissed version opened the automatic prompt again");
+        Click(f, "UpdateButton");
+        if (!overlay.IsVisible)
+            throw new InvalidOperationException("dismissed version could not be opened manually");
+        Click(f, "UpdateButton");
+        f.UpdateHandler.ReleaseVersion = "1.3.0";
+        RunBackgroundUpdateCheck(f);
+        if (!overlay.IsVisible)
+            throw new InvalidOperationException("a newer version did not open a fresh automatic prompt");
+        Equal(0, f.Service.AppliedMinutes.Count, "automatic update prompt touched the game");
+    }
+
+    private static void RunBackgroundUpdateCheck(Fixture f)
+    {
+        var check = (Task)typeof(MainWindow).GetMethod("CheckForUpdatesAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(f.Window, null)!;
+        WaitFor(() => check.IsCompleted, "background version check did not finish");
+        check.GetAwaiter().GetResult();
+    }
+
     public sealed class UpdateHttpStub : HttpMessageHandler
     {
-        public string ReleaseVersion { get; set; } = "1.1.3";
+        public string ReleaseVersion { get; set; } = "1.1.4";
         public bool Unpublished { get; set; }
         public string? LastManifestUrl { get; private set; }
         public int Downloads { get; private set; }

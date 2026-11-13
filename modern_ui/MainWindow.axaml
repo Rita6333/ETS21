@@ -216,7 +216,7 @@
               <TextBlock Text="软件更新" FontSize="19" FontWeight="SemiBold" />
               <TextBlock x:Name="UpdateVersionText" Classes="caption" />
             </StackPanel>
-            <Button Grid.Column="1" Classes="windowControl close" Click="HideUpdates_Click"
+            <Button x:Name="HideUpdatesButton" Grid.Column="1" Classes="windowControl close" Click="HideUpdates_Click"
                     ToolTip.Tip="关闭更新面板" AutomationProperties.Name="关闭更新面板">
               <Path Data="M3 3L11 11 M11 3L3 11"
                     Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"

@@ -20,6 +20,7 @@ public partial class MainWindow
     private bool _updatesClosing;
     private bool _downloadProgressActive;
     private bool _loadingUpdateSettings;
+    private readonly HashSet<string> _promptedUpdateVersions = new(StringComparer.Ordinal);
     private IInputElement? _updatePreviousFocus;
 
     private void InitializeUpdater()
@@ -79,11 +80,20 @@ public partial class MainWindow
             HideUpdates();
             return;
         }
+        ShowUpdatesPanel();
+    }
+
+    private void ShowUpdatesPanel()
+    {
+        if (_updatesClosing || UpdateOverlay.IsVisible) return;
         EndSliderDrag();
         LoadUpdateSettings();
         _updatePreviousFocus = FocusManager?.GetFocusedElement();
         UpdateOverlay.IsVisible = true;
-        CheckUpdatesButton.Focus();
+        if (_updateBusy)
+            this.FindControl<Button>("HideUpdatesButton")?.Focus();
+        else
+            CheckUpdatesButton.Focus();
     }
 
     private void HideUpdates_Click(object? sender, RoutedEventArgs e) => HideUpdates();
@@ -156,11 +166,13 @@ public partial class MainWindow
             if (_downloadedUpdate?.Release == release && File.Exists(_downloadedUpdate.FilePath))
             {
                 MarkUpdateReady();
+                PromptForUpdate(release);
                 return;
             }
             _downloadedUpdate = null;
             ResetUpdateAnnouncement();
             UpdateStatusText.Text = $"发现新版本 v{release.Version}。";
+            PromptForUpdate(release);
             if (_updates.Settings.AutoDownload)
                 await DownloadUpdateCoreAsync(release, operation.Token);
         }
@@ -193,6 +205,13 @@ public partial class MainWindow
         InstallUpdateButton.IsVisible = _availableUpdate is not null;
         InstallUpdateButton.IsEnabled = !busy;
         InstallUpdateButton.Content = _downloadedUpdate is null ? "下载更新" : "重启更新";
+    }
+
+    private void PromptForUpdate(UpdateRelease release)
+    {
+        // A dismissed version stays quiet for this run; newer versions can notify again.
+        if (_promptedUpdateVersions.Add(release.Version))
+            ShowUpdatesPanel();
     }
 
     private void ShowUpdateNotes(UpdateRelease release)

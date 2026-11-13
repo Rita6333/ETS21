@@ -66,6 +66,9 @@ internal static partial class Program
             ("unpublished update source keeps the app usable", UnpublishedUpdateSource),
             ("failed update check can retry and show current version is latest", UpdateCheckRetry),
             ("update action labels are centered in their buttons", UpdateButtonAlignment),
+            ("background current-version check does not open the update panel", BackgroundCurrentVersion),
+            ("background failed check does not open the update panel", BackgroundUpdateFailure),
+            ("new versions prompt once while dismissed versions stay quiet", BackgroundUpdatePrompt),
         ];
 
         var failures = 0;
@@ -424,7 +427,7 @@ internal static partial class Program
         public Fixture(bool useMinimumSize = false)
         {
             _updateClient = new HttpClient(UpdateHandler);
-            Window = new MainWindow([], new UpdateService(_updateClient, _updateDirectory, new Version(1, 1, 3)));
+            Window = new MainWindow([], new UpdateService(_updateClient, _updateDirectory, new Version(1, 1, 4)));
             Service = GameTimeService.Latest;
             if (useMinimumSize)
             {
