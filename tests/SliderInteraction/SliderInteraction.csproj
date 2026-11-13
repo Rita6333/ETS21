@@ -7,7 +7,7 @@
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <RootNamespace>ETS2DayNightModern</RootNamespace>
     <AssemblyName>ETS2昼夜切换</AssemblyName>
-    <Version>1.1.2</Version>
+    <Version>1.1.3</Version>
     <MainWindowCodeBehind Condition="'$(MainWindowCodeBehind)' == ''">../../modern_ui/MainWindow.axaml.cs</MainWindowCodeBehind>
   </PropertyGroup>
   <ItemGroup>
@@ -17,6 +17,7 @@
     <Compile Include="$(MainWindowCodeBehind)" Link="MainWindow.axaml.cs" />
     <Compile Include="../../modern_ui/MainWindow.Animations.cs" Link="MainWindow.Animations.cs" />
     <Compile Include="../../modern_ui/MainWindow.Updates.cs" Link="MainWindow.Updates.cs" />
+    <Compile Include="../../modern_ui/MainWindow.UpdateRelaunch.cs" Link="MainWindow.UpdateRelaunch.cs" />
     <Compile Include="../../modern_ui/UpdateService.cs" Link="UpdateService.cs" />
     <Compile Include="../../modern_ui/UpdateInstaller.cs" Link="UpdateInstaller.cs" />
     <AvaloniaXaml Include="../../modern_ui/MainWindow.axaml" Link="MainWindow.axaml" />

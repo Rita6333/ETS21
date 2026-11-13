@@ -32,6 +32,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         InitializeAnimations();
         InitializeUpdater();
+        InitializeUpdateRelaunch();
         PropertyChanged += (_, args) =>
         {
             if (args.Property == WindowStateProperty || args.Property == CanResizeProperty)

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace ETS2DayNightModern;
@@ -32,7 +33,7 @@ internal static class UpdateInstaller
         var commit = Path.Combine(dataDirectory, "commit-" + id);
         using var current = Process.GetCurrentProcess();
         var script = BuildScript(update, target, current.Id,
-            current.StartTime.ToUniversalTime().Ticks, stage, backup, log, ready, commit);
+            current.StartTime.ToUniversalTime().Ticks, stage, backup, log, ready, commit, id);
         var info = new ProcessStartInfo
         {
             FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
@@ -50,6 +51,7 @@ internal static class UpdateInstaller
         info.ArgumentList.Add("-EncodedCommand");
         info.ArgumentList.Add(Convert.ToBase64String(Encoding.Unicode.GetBytes(script)));
         using var helper = Process.Start(info) ?? throw new IOException("无法启动更新安装程序。");
+        AllowSetForegroundWindow((uint)helper.Id);
         await ConfirmReadyAsync(helper, ready, commit, cancellationToken).ConfigureAwait(false);
     }
 
@@ -78,7 +80,8 @@ internal static class UpdateInstaller
     }
 
     internal static string BuildScript(DownloadedUpdate update, string target, int processId,
-        long startTicks, string stage, string backup, string log, string? ready = null, string? commit = null) => $$"""
+        long startTicks, string stage, string backup, string log, string? ready = null, string? commit = null,
+        string? startupId = null, int startupTimeoutSeconds = 20) => $$"""
         $ErrorActionPreference = 'Stop'
         $download = {{Quote(update.FilePath)}}
         $target = {{Quote(target)}}
@@ -87,6 +90,9 @@ internal static class UpdateInstaller
         $log = {{Quote(log)}}
         $ready = {{Quote(ready ?? "")}}
         $commit = {{Quote(commit ?? "")}}
+        $startupToken = {{Quote(startupId ?? Guid.NewGuid().ToString("N"))}}
+        $startupReady = [IO.Path]::Combine([IO.Path]::GetDirectoryName($log), ('relaunch-' + $startupToken + '.ready'))
+        $startupTimeout = {{Math.Clamp(startupTimeoutSeconds, 2, 60).ToString(CultureInfo.InvariantCulture)}}
         $expectedHash = {{Quote(update.Release.Sha256)}}
         $originalId = {{processId.ToString(CultureInfo.InvariantCulture)}}
         $originalStart = [long]{{Quote(startTicks.ToString(CultureInfo.InvariantCulture))}}
@@ -100,19 +106,75 @@ internal static class UpdateInstaller
                 try { return $original.StartTime.ToUniversalTime().Ticks -eq $originalStart } finally { $original.Dispose() }
             } catch { return $false }
         }
-        function Start-Application {
+        function Start-Application([bool]$requireReady) {
+            if ([IO.File]::Exists($startupReady)) { [IO.File]::Delete($startupReady) }
             $start = [Diagnostics.ProcessStartInfo]::new()
             $start.FileName = $target
             $start.WorkingDirectory = [IO.Path]::GetDirectoryName($target)
             $start.UseShellExecute = $true
+            $start.WindowStyle = [Diagnostics.ProcessWindowStyle]::Normal
+            $start.Arguments = '--update-relaunch ' + $startupToken
             $app = [Diagnostics.Process]::Start($start)
             if ($null -eq $app) { throw 'Unable to start application.' }
             try {
-                [Threading.Thread]::Sleep(1000)
-                if ($app.HasExited -and $app.ExitCode -ne 0) { throw ('Application exited with code ' + $app.ExitCode) }
+                $foregroundPermission = [UpdateWindowNative]::AllowSetForegroundWindow([uint32]$app.Id)
+                Write-InstallLog ('Foreground permission forwarded to application: ' + $foregroundPermission)
+                Write-InstallLog ('Started application PID ' + $app.Id + '; waiting for its window.')
+                $deadline = [DateTime]::UtcNow.AddSeconds($startupTimeout)
+                $restored = $false
+                while ($true) {
+                    $app.Refresh()
+                    if ($app.HasExited) { throw ('Application exited before opening its window; code ' + $app.ExitCode) }
+                    $window = $app.MainWindowHandle
+                    if ($window -ne [IntPtr]::Zero -and -not $restored) {
+                        [void][UpdateWindowNative]::ShowWindowAsync($window, 9)
+                        $foreground = [UpdateWindowNative]::SetForegroundWindow($window)
+                        Write-InstallLog ('Window restore requested; foreground request accepted: ' + $foreground)
+                        $restored = $true
+                    }
+                    if ([IO.File]::Exists($startupReady) -and [IO.File]::ReadAllText($startupReady) -eq $startupToken) {
+                        Write-InstallLog 'Application confirmed that its window opened.'
+                        return
+                    }
+                    if (-not $requireReady -and $window -ne [IntPtr]::Zero -and [UpdateWindowNative]::IsWindowVisible($window)) {
+                        Write-InstallLog 'Previous application window is visible.'
+                        return
+                    }
+                    if ([DateTime]::UtcNow -ge $deadline) { throw 'Application did not confirm its window opened before the timeout.' }
+                    [Threading.Thread]::Sleep(100)
+                }
+            } catch {
+                try {
+                    if (-not $app.HasExited) {
+                        $app.Kill()
+                        [void]$app.WaitForExit(5000)
+                        Write-InstallLog 'Stopped the unconfirmed application before rollback.'
+                    }
+                } catch { Write-InstallLog ('Unable to stop unconfirmed application: ' + $_.Exception.ToString()) }
+                throw
             } finally { $app.Dispose() }
         }
         try {
+            Import-Module ([IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Utility.psd1'))
+            Add-Type -TypeDefinition @'
+        using System;
+        using System.Runtime.InteropServices;
+        public static class UpdateWindowNative {
+            [DllImport("user32.dll")]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            public static extern bool AllowSetForegroundWindow(uint processId);
+            [DllImport("user32.dll")]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            public static extern bool IsWindowVisible(IntPtr window);
+            [DllImport("user32.dll")]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            public static extern bool ShowWindowAsync(IntPtr window, int command);
+            [DllImport("user32.dll")]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            public static extern bool SetForegroundWindow(IntPtr window);
+        }
+        '@
+
             if ($ready -and $commit) {
                 [IO.File]::WriteAllText($ready, 'ready')
                 $deadline = [DateTime]::UtcNow.AddSeconds(10)
@@ -145,7 +207,7 @@ internal static class UpdateInstaller
                     [Threading.Thread]::Sleep(250)
                 }
             }
-            Start-Application
+            Start-Application $true
             Write-InstallLog ('Installed successfully. Previous version: ' + $backup)
         } catch {
             Write-InstallLog ('Install failed: ' + $_.Exception.ToString())
@@ -156,14 +218,19 @@ internal static class UpdateInstaller
                 } catch { Write-InstallLog ('Rollback failed: ' + $_.Exception.ToString()) }
             }
             if (-not (Original-IsRunning)) {
-                try { Start-Application } catch { Write-InstallLog ('Restart failed: ' + $_.Exception.ToString()) }
+                try { Start-Application $false } catch { Write-InstallLog ('Restart failed: ' + $_.Exception.ToString()) }
             }
         } finally {
             try { [IO.File]::Delete($stage) } catch { }
             if ($ready) { try { [IO.File]::Delete($ready) } catch { } }
             if ($commit) { try { [IO.File]::Delete($commit) } catch { } }
+            try { [IO.File]::Delete($startupReady) } catch { }
         }
         """;
 
     private static string Quote(string value) => "'" + value.Replace("'", "''") + "'";
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AllowSetForegroundWindow(uint processId);
 }

@@ -297,6 +297,9 @@ internal static class Program
         Assert(script.Contains("user''s 软件 $(literal).exe'"), "PowerShell paths not single-quoted");
         Assert(script.Contains("$original.StartTime.ToUniversalTime().Ticks -eq $originalStart"), "PID reuse protection missing");
         Assert(script.Contains("[IO.File]::Replace($backup, $target, $stage, $true)"), "rollback missing");
+        Assert(script.Contains("[Diagnostics.ProcessWindowStyle]::Normal"), "relaunched application was not explicitly shown normally");
+        Assert(script.Contains("'--update-relaunch ' + $startupToken"), "window readiness handshake argument missing");
+        Assert(script.Contains("Application confirmed that its window opened."), "installer did not await window readiness");
         var scriptPath = Path.Combine(fixture.Directory, "installer.ps1");
         File.WriteAllText(scriptPath, script, new UTF8Encoding(true));
         var parser = "$tokens=$null;$errors=$null;[System.Management.Automation.Language.Parser]::ParseFile('"
@@ -325,8 +328,9 @@ internal static class Program
         var oldSource = Path.Combine(dummyRoot, "old/Dummy.exe");
         var newSource = Path.Combine(dummyRoot, "new/Dummy.exe");
         var failedSource = Path.Combine(dummyRoot, "failed/Dummy.exe");
-        if (!File.Exists(oldSource) || !File.Exists(newSource) || !File.Exists(failedSource))
-            throw new Exception("Build tests/SoftwareUpdateDummy into _case/update_dummy/{old,new,failed} first.");
+        var noWindowSource = Path.Combine(dummyRoot, "no-window/Dummy.exe");
+        if (!File.Exists(oldSource) || !File.Exists(newSource) || !File.Exists(failedSource) || !File.Exists(noWindowSource))
+            throw new Exception("Build tests/SoftwareUpdateDummy into _case/update_dummy/{old,new,failed,no-window} first.");
         using var fixture = new Fixture(_ => BytesResponse(Executable));
         var previousRoot = Environment.GetEnvironmentVariable("DOTNET_ROOT");
         var runtimeRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../_deps/dotnet8/sdk"));
@@ -338,6 +342,7 @@ internal static class Program
             await RunInstallCase("success", newSource, expected: "new", corruptHash: false);
             await RunInstallCase("rollback", failedSource, expected: "old", corruptHash: false);
             await RunInstallCase("bad-hash", newSource, expected: "old", corruptHash: true);
+            await RunInstallCase("no-window", noWindowSource, expected: "old", corruptHash: false);
         }
         finally { Environment.SetEnvironmentVariable("DOTNET_ROOT", previousRoot); }
 
@@ -357,7 +362,7 @@ internal static class Program
             var ready = Path.Combine(directory, "ready");
             var commit = Path.Combine(directory, "commit");
             var script = UpdateInstaller.BuildScript(new DownloadedUpdate(release, download), target,
-                int.MaxValue, 1, stage, backup, log, ready, commit);
+                int.MaxValue, 1, stage, backup, log, ready, commit, startupTimeoutSeconds: 3);
             var info = new ProcessStartInfo
             {
                 FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe"),
@@ -378,8 +383,17 @@ internal static class Program
             Assert(SHA256.HashData(File.ReadAllBytes(target)).SequenceEqual(expectedHash), name + " left wrong executable");
             Assert(!File.Exists(stage), name + " left staged executable");
             Assert(File.Exists(download), name + " deleted shared download cache");
+            // The acknowledged dummy remains alive briefly so readiness is tested
+            // against a running application; let that owned process finish before cleanup.
+            await Task.Delay(1250);
             if (name == "success") Assert(File.Exists(backup), "successful update did not keep backup");
             if (name == "rollback") Assert(File.ReadAllText(log).Contains("Previous version restored"), "rollback not recorded");
+            if (name == "no-window")
+            {
+                Assert(File.ReadAllText(log).Contains("Stopped the unconfirmed application"), "invisible child was left running");
+                Assert(File.ReadAllText(log).Contains("Previous version restored"), "invisible child did not trigger rollback");
+                Assert(!File.ReadAllText(log).Contains("Installed successfully"), "live process without a ready window was reported as success");
+            }
             if (corruptHash) Assert(!File.Exists(backup), "bad hash replaced original");
         }
     }
