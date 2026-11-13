@@ -12,4 +12,4 @@ $testDotnet = '.\_deps\dotnet8\sdk\dotnet.exe'
 & $testDotnet run --project tests/SoftwareUpdate/SoftwareUpdate.csproj --no-restore
 ```
 
-测试会暂时设置当前测试进程的 `DOTNET_ROOT`，让三个不自带运行库的极小 Dummy 程序使用本地 SDK 的运行库，并在结束后恢复。不会修改全局环境变量或启动桌面窗口。
+测试会暂时设置当前测试进程的 `DOTNET_ROOT`，让三个不自带运行库的极小 Dummy 程序使用本地 SDK 的运行库；未找到工作区 SDK 时使用当前 .NET 的运行库，兼容 GitHub Actions。结束后恢复原值，不会修改全局环境变量或启动桌面窗口。

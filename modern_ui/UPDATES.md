@@ -8,7 +8,19 @@ https://github.com/Rita6333/ETS21/releases/latest/download/update.json
 
 在窗口栏的“软件更新”中可手动检查更新、开关后台下载。更新源地址与自动检查选项按用户要求隐藏；默认启动时和每 6 小时自动检查新版本。发现新版后在后台下载，完成后点击“重启更新”替换程序。检查或下载不会中断游戏操作。后台检查失败保持安静，手动检查会显示具体原因。
 
-## 发布一个新版本
+## 使用 GitHub 自动发布
+
+仓库已提供 `.github/workflows/release.yml`。更新项目中的版本号与 `.github/release-notes.md` 后，提交源码并推送对应版本标签，例如：
+
+```powershell
+git push origin main
+git tag -a v1.2.0 -m 'ETS2 DayNight v1.2.0'
+git push origin v1.2.0
+```
+
+标签必须与 `ETS2DayNightModern.csproj` 的 `Version` 完全对应。GitHub Actions 会先运行界面、时钟和更新回归，再构建 Windows x64 单文件，并发布 EXE 与 `update.json` 到最新正式 Release。每次发布使用新的版本号和标签；发布后校验远程清单与下载文件的 SHA256。清单中的简短说明可在 workflow 的 `New-UpdateManifest.ps1 -Notes` 参数中更新。
+
+## 手动发布一个新版本
 
 每次发布先提高 `ETS2DayNightModern.csproj` 中的软件版本，再构建 Windows x64 自包含单文件。更新资产必须是可直接运行的 EXE；不能将 ZIP 下载地址填进更新清单。
 

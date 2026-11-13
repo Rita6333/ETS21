@@ -6,10 +6,12 @@ the real input system, including track buttons, thumb, capture and routed events
 The game service and elevation helper are substitutes: no game process is read or
 written, and no desktop window is created.
 
-The 17 scenarios cover slider capture/release behavior and the custom title bar:
+The 21 scenarios cover slider capture/release behavior, the update overlay and the custom title bar:
 maximize/restore state and labels, title-bar double click, fixed-size behavior,
 minimize, close and Alt+F4. Native window movement, resize borders and the Windows
 system menu use the platform API and are not simulated by the headless runner.
+Update checks use an in-memory HTTP substitute and a temporary cache; no release
+server is contacted and no real installer is launched.
 
 Run from the workspace root:
 
