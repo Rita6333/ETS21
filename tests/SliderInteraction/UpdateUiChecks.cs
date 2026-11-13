@@ -164,7 +164,7 @@ internal static partial class Program
 
     public sealed class UpdateHttpStub : HttpMessageHandler
     {
-        public string ReleaseVersion { get; set; } = "1.1.4";
+        public string ReleaseVersion { get; set; } = "1.1.5";
         public bool Unpublished { get; set; }
         public string? LastManifestUrl { get; private set; }
         public int Downloads { get; private set; }

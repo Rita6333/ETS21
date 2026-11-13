@@ -20,6 +20,9 @@ public partial class MainWindow : Window
     private int _selectedMinute = 720;
     private int _messageVersion;
     private GameState _state = GameState.Empty;
+    private Task? _refreshTask;
+    private bool _windowOpened;
+    private bool _windowClosed;
 
     public MainWindow() : this(Array.Empty<string>()) { }
 
@@ -53,26 +56,42 @@ public partial class MainWindow : Window
         TimeSlider.PropertyChanged += (_, args) =>
         {
             if (args.Property == Slider.ValueProperty)
-            {
-                _selectedMinute = (int)Math.Round(TimeSlider.Value);
-                SelectedTimeText.Text = FormatMinute(_selectedMinute);
-                UpdateSelectionAppearance();
-            }
+                UpdateSelectedMinute((int)Math.Round(TimeSlider.Value));
         };
         UpdateSelectionAppearance();
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        _timer.Tick += async (_, _) => await RefreshAsync();
+        _timer.Tick += async (_, _) =>
+        {
+            // Schedule from completion so a slow scan cannot queue more scans.
+            _timer.Stop();
+            await RefreshAsync();
+            ScheduleRefresh();
+        };
         Opened += async (_, _) =>
         {
+            _windowOpened = true;
             await RefreshAsync();
-            _timer.Start();
-            await RunStartupActionAsync();
+            ScheduleRefresh();
+            if (!_windowClosed) await RunStartupActionAsync();
+        };
+        PropertyChanged += async (_, args) =>
+        {
+            if (!_windowOpened || _windowClosed ||
+                (args.Property != WindowStateProperty && args.Property != IsVisibleProperty)) return;
+            _timer.Stop();
+            if (!CanRefresh) return;
+            await RefreshAsync();
+            ScheduleRefresh();
         };
         Deactivated += (_, _) => EndSliderDrag();
-        Closed += (_, _) =>
+        Closed += async (_, _) =>
         {
+            _windowClosed = true;
             EndSliderDrag();
             _timer.Stop();
+            // A read already in progress still owns the cached process handle.
+            try { if (_refreshTask is not null) await _refreshTask; }
+            finally { _service.Dispose(); }
         };
     }
 
@@ -164,24 +183,59 @@ public partial class MainWindow : Window
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool PostMessage(nint window, uint message, nint wparam, nint lparam);
 
-    private async Task RefreshAsync()
+    private bool CanRefresh => _windowOpened && !_windowClosed && IsVisible && WindowState != WindowState.Minimized;
+
+    private void ScheduleRefresh()
+    {
+        if (!CanRefresh) return;
+        _timer.Interval = TimeSpan.FromSeconds(_state.Alive && _state.Patchable ? 1 : 3);
+        _timer.Start();
+    }
+
+    private Task RefreshAsync()
+    {
+        if (_windowClosed) return Task.CompletedTask;
+        // Explicit refreshes after a user action share any pending read too.
+        if (_refreshTask is { IsCompleted: false }) return _refreshTask;
+        return _refreshTask = RefreshCoreAsync();
+    }
+
+    private async Task RefreshCoreAsync()
     {
         var state = await Task.Run(_service.Probe);
+        if (_windowClosed) return;
+        var previous = _state;
         _state = state;
-        GameTimeText.Text = state.GameMinute >= 0 ? FormatMinute(state.GameMinute) : "--:--";
-        EnvironmentText.Text = state.EnvironmentMinute >= 0
-            ? $"环境：已锁定 {FormatMinute(state.EnvironmentMinute)}"
-            : state.Alive ? "环境：原样" : "环境：—";
+        if (previous.GameMinute != state.GameMinute)
+            GameTimeText.Text = state.GameMinute >= 0 ? FormatMinute(state.GameMinute) : "--:--";
+        if (previous.EnvironmentMinute != state.EnvironmentMinute || previous.Alive != state.Alive)
+            EnvironmentText.Text = state.EnvironmentMinute >= 0
+                ? $"环境：已锁定 {FormatMinute(state.EnvironmentMinute)}"
+                : state.Alive ? "环境：原样" : "环境：—";
         if (_sliderPointer is null)
         {
             var value = state.EnvironmentMinute >= 0 ? state.EnvironmentMinute : state.GameMinute;
             if (value >= 0)
             {
-                _selectedMinute = value;
                 TimeSlider.Value = value;
-                SelectedTimeText.Text = FormatMinute(value);
+                UpdateSelectedMinute(value);
             }
         }
+    }
+
+    private async Task RefreshAfterOperationAsync()
+    {
+        // A probe started before the write may return the previous environment.
+        if (_refreshTask is { IsCompleted: false }) await _refreshTask;
+        await RefreshAsync();
+    }
+
+    private void UpdateSelectedMinute(int minute)
+    {
+        if (_selectedMinute == minute) return;
+        _selectedMinute = minute;
+        SelectedTimeText.Text = FormatMinute(minute);
+        UpdateSelectionAppearance();
     }
 
     private void UpdateSelectionAppearance()
@@ -193,9 +247,10 @@ public partial class MainWindow : Window
             >= 1080 and < 1200 => "黄昏 · SUNSET",
             _ => "夜晚 · NIGHT"
         };
-        foreach (var button in new[] { PresetMorning, PresetDay, PresetDusk, PresetNight })
-            button.Classes.Set("selected", button.Tag?.ToString() ==
-                _selectedMinute.ToString(CultureInfo.InvariantCulture));
+        PresetMorning.Classes.Set("selected", _selectedMinute == 360);
+        PresetDay.Classes.Set("selected", _selectedMinute == 720);
+        PresetDusk.Classes.Set("selected", _selectedMinute == 1140);
+        PresetNight.Classes.Set("selected", _selectedMinute == 1380);
     }
 
     private void Slider_PointerPressed(object? sender, PointerPressedEventArgs e)
@@ -266,9 +321,8 @@ public partial class MainWindow : Window
         if (sender is not Button button || button.Tag is null) return;
         if (!int.TryParse(button.Tag.ToString(), NumberStyles.Integer,
                           CultureInfo.InvariantCulture, out var minute)) return;
-        _selectedMinute = minute;
         TimeSlider.Value = minute;
-        SelectedTimeText.Text = FormatMinute(minute);
+        UpdateSelectedMinute(minute);
         await ApplyAsync(minute);
     }
 
@@ -291,7 +345,7 @@ public partial class MainWindow : Window
             SetStatus("正在恢复游戏原始代码…", "#A09DA7");
             var result = await Task.Run(() => _service.Restore(_state));
             SetStatus(result.Message, result.Success ? "#71D5A5" : "#EF999E");
-            await RefreshAsync();
+            await RefreshAfterOperationAsync();
         }
         finally
         {
@@ -318,7 +372,7 @@ public partial class MainWindow : Window
             SetStatus("正在切换环境…", "#A09DA7");
             var result = await Task.Run(() => _service.Apply(_state, minute));
             SetStatus(result.Message, result.Success ? "#71D5A5" : "#EF999E");
-            await RefreshAsync();
+            await RefreshAfterOperationAsync();
         }
         finally
         {

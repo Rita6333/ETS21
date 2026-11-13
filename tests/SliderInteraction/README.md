@@ -6,7 +6,7 @@ the real input system, including track buttons, thumb, capture and routed events
 The game service and elevation helper are substitutes: no game process is read or
 written, and no desktop window is created.
 
-The 26 scenarios cover slider capture/release behavior, the update overlay and the custom title bar:
+The 31 scenarios cover slider capture/release behavior, the update overlay and the custom title bar:
 maximize/restore state and labels, title-bar double click, fixed-size behavior,
 minimize, close and Alt+F4. Native window movement, resize borders and the Windows
 system menu use the platform API and are not simulated by the headless runner.
@@ -16,6 +16,12 @@ The update cases also verify that a failed check can retry and report the curren
 version as latest without offering an installation.
 Automatic update prompts appear only for new versions, remain dismissed for the
 same version during a run, and stay closed for current versions or failed checks.
+Performance cases hold a substitute game read in flight to verify that concurrent
+refreshes share one read and closing waits to dispose the service without updating
+the closed window. They also verify that minimizing or hiding pauses polling,
+restoring refreshes immediately, and unavailable games use a slower polling interval.
+An apply performed during an existing read must perform a fresh read afterward,
+so the displayed environment reflects the completed operation.
 
 Run from the workspace root:
 

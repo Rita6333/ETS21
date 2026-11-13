@@ -1,6 +1,8 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 using ETS2DayNightModern;
 
 internal static class Program
@@ -9,6 +11,8 @@ internal static class Program
         "TryResolveLayout", BindingFlags.Instance | BindingFlags.NonPublic)!;
     private static readonly MethodInfo ReadMinute = typeof(GameTimeService).GetMethod(
         "ReadWorldMinute", BindingFlags.Static | BindingFlags.NonPublic)!;
+    private delegate bool ResolveDelegate(GameTimeService service, nint handle, nuint imageBase,
+        uint imageSize, uint pid, out GameTimeService.GameLayout layout, out int environmentMinute);
 
     private static int Main(string[] args)
     {
@@ -18,6 +22,9 @@ internal static class Program
             return 2;
         }
 
+        if (args.Length > 0 && args[0] == "--benchmark")
+            return Benchmark();
+
         (string Name, Action Run)[] tests =
         [
             ("minor update moves the clock global without moving the known refresh site", MovedClockGlobal),
@@ -26,6 +33,10 @@ internal static class Program
             ("conflicting clock signatures do not guess a global", ConflictingClockSignatures),
             ("module identity changes invalidate the cached clock", ModuleIdentityChange),
             ("historical offsets remain a fallback when image scanning is unavailable", HistoricalFallback),
+            ("failed image scans wait before retrying and a new identity retries immediately", FailedScanBackoff),
+            ("cached native clock samples allocate no managed memory", CachedClockAllocations),
+            ("cached read sessions read only their original process and dispose safely", CachedReadSession),
+            ("closing during concurrent probes releases the read session safely", ConcurrentDispose),
         ];
 
         if (args.Length > 0)
@@ -47,6 +58,35 @@ internal static class Program
         }
         Console.WriteLine($"{tests.Length - failed}/{tests.Length} passed; only this test process's allocated memory was read.");
         return failed == 0 ? 0 : 1;
+    }
+
+    private static int Benchmark()
+    {
+        using var image = new FakeImage();
+        var service = new GameTimeService();
+        var resolve = ResolveLayout.CreateDelegate<ResolveDelegate>();
+        var read = ReadMinute.CreateDelegate<Func<nint, nuint, nuint, int>>();
+        var handle = GetCurrentProcess();
+        for (var i = 0; i < 1000; i++)
+        {
+            resolve(service, handle, (nuint)image.BaseAddress, image.Size, 100, out var layout, out _);
+            read(handle, (nuint)image.BaseAddress, layout.GameObjectRva);
+        }
+        const int count = 20000;
+        var stopwatch = new Stopwatch();
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        stopwatch.Start();
+        for (var i = 0; i < count; i++)
+        {
+            if (!resolve(service, handle, (nuint)image.BaseAddress, image.Size, 100, out var layout, out _) ||
+                read(handle, (nuint)image.BaseAddress, layout.GameObjectRva) != 69)
+                throw new InvalidOperationException("Benchmark could not read the synthetic clock.");
+        }
+        stopwatch.Stop();
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Console.WriteLine($"Cached native clock: {count} samples, {stopwatch.Elapsed.TotalMilliseconds:F2} ms, " +
+            $"{allocated} managed bytes ({allocated / count} bytes/sample). Only this process's allocated memory was read.");
+        return 0;
     }
 
     private static void MovedClockGlobal()
@@ -134,6 +174,118 @@ internal static class Program
         Equal(FakeImage.OldClockRva, result.Layout.GameObjectRva, "historical clock fallback was lost");
         Equal(FakeImage.RefreshRva, result.Layout.EnvironmentRefreshRva, "historical refresh fallback was lost");
         Equal(69, WorldMinute(image, result.Layout), "historical clock fallback was not readable");
+    }
+
+    private static void FailedScanBackoff()
+    {
+        using var image = new FakeImage();
+        var time = new ManualTimeProvider();
+        using var service = new GameTimeService(time);
+        var refresh = image.Read((uint)FakeImage.RefreshRva, 14);
+        Marshal.Copy(new byte[14], 0, image.BaseAddress + (int)FakeImage.RefreshRva, 14);
+        True(!TryResolve(service, image, 100, out _), "an unsupported refresh site was accepted");
+        Marshal.Copy(refresh, 0, image.BaseAddress + (int)FakeImage.RefreshRva, refresh.Length);
+        True(!TryResolve(service, image, 100, out _), "the failed image was rescanned on the next tick");
+        time.Advance(TimeSpan.FromSeconds(15));
+        True(TryResolve(service, image, 100, out _), "the retry delay prevented later recovery");
+
+        using var nextService = new GameTimeService(time);
+        Marshal.Copy(new byte[14], 0, image.BaseAddress + (int)FakeImage.RefreshRva, 14);
+        True(!TryResolve(nextService, image, 101, out _), "an unsupported refresh site was accepted");
+        Marshal.Copy(refresh, 0, image.BaseAddress + (int)FakeImage.RefreshRva, refresh.Length);
+        True(TryResolve(nextService, image, 102, out _), "a new process identity inherited the failed scan delay");
+    }
+
+    private static void CachedClockAllocations()
+    {
+        using var image = new FakeImage();
+        using var service = new GameTimeService();
+        var resolve = ResolveLayout.CreateDelegate<ResolveDelegate>();
+        var read = ReadMinute.CreateDelegate<Func<nint, nuint, nuint, int>>();
+        var handle = GetCurrentProcess();
+        for (var i = 0; i < 1000; i++)
+        {
+            resolve(service, handle, (nuint)image.BaseAddress, image.Size, 100, out var layout, out _);
+            read(handle, (nuint)image.BaseAddress, layout.GameObjectRva);
+        }
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var i = 0; i < 1000; i++)
+        {
+            if (!resolve(service, handle, (nuint)image.BaseAddress, image.Size, 100, out var layout, out _) ||
+                read(handle, (nuint)image.BaseAddress, layout.GameObjectRva) != 69)
+                throw new InvalidOperationException("cached clock was not readable");
+        }
+        Equal(0L, GC.GetAllocatedBytesForCurrentThread() - before,
+            "normal timer samples allocated temporary arrays or delegates");
+    }
+
+    private static void CachedReadSession()
+    {
+        using var image = new FakeImage();
+        using var service = new GameTimeService();
+        var handle = SeedOwnReadSession(service, image);
+        var first = service.Probe();
+        Equal((uint)Environment.ProcessId, first.Pid, "the cached process identity was discarded");
+        Equal(69, first.GameMinute, "the cached session did not read the test process's allocation");
+        image.SetClockMinute(70);
+        Equal(70, service.Probe().GameMinute, "the cached session stopped refreshing the clock");
+        service.Dispose();
+        True(handle.IsClosed, "the cached native process handle leaked after disposal");
+        Equal(GameState.Empty, service.Probe(), "a disposed service discovered a different process");
+    }
+
+    private static void ConcurrentDispose()
+    {
+        using var image = new FakeImage();
+        using var service = new GameTimeService();
+        var handle = SeedOwnReadSession(service, image);
+        var tasks = Enumerable.Range(0, 4).Select(_ => Task.Run(() =>
+        {
+            for (var i = 0; i < 100; i++)
+            {
+                var state = service.Probe();
+                True(state == GameState.Empty || state.GameMinute == 69,
+                    "a probe observed a partially disposed read session");
+            }
+        })).ToArray();
+        service.Dispose();
+        Task.WaitAll(tasks);
+        True(handle.IsClosed, "concurrent probes retained a native handle after disposal");
+    }
+
+    // Seed only this runner's own process and synthetic image. Probe therefore
+    // exercises the production cache path without finding or opening a game.
+    private static SafeProcessHandle SeedOwnReadSession(GameTimeService service, FakeImage image)
+    {
+        var nativeHandle = OpenProcess(0x00101010, false, (uint)Environment.ProcessId);
+        if (nativeHandle == 0) throw new InvalidOperationException("Could not open this test process for reading.");
+        var handle = new SafeProcessHandle(nativeHandle, ownsHandle: true);
+        SetField(service, "_processHandle", handle);
+        SetField(service, "_processPid", (uint)Environment.ProcessId);
+        SetField(service, "_processBase", image.BaseAddress);
+        SetField(service, "_processSize", image.Size);
+        return handle;
+    }
+
+    private static void SetField(GameTimeService service, string name, object value) =>
+        typeof(GameTimeService).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(service, value);
+
+    private static bool TryResolve(GameTimeService service, FakeImage image, uint processKey,
+        out GameTimeService.GameLayout layout)
+    {
+        object?[] arguments = [GetCurrentProcess(), (nuint)image.BaseAddress, image.Size,
+            processKey, default(GameTimeService.GameLayout), -1];
+        var found = (bool)ResolveLayout.Invoke(service, arguments)!;
+        layout = (GameTimeService.GameLayout)arguments[4]!;
+        return found;
+    }
+
+    private sealed class ManualTimeProvider : TimeProvider
+    {
+        private long _timestamp;
+        public override long TimestampFrequency => 1000;
+        public override long GetTimestamp() => _timestamp;
+        public void Advance(TimeSpan interval) => _timestamp += (long)interval.TotalMilliseconds;
     }
 
     private static (GameTimeService.GameLayout Layout, int EnvironmentMinute) Resolve(
@@ -250,6 +402,8 @@ internal static class Program
 
     [DllImport("kernel32.dll")]
     private static extern nint GetCurrentProcess();
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern nint OpenProcess(uint access, bool inherit, uint processId);
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern nint VirtualAlloc(nint address, nuint size, uint allocationType, uint protection);
     [DllImport("kernel32.dll", SetLastError = true)]

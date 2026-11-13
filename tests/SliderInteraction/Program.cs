@@ -69,6 +69,11 @@ internal static partial class Program
             ("background current-version check does not open the update panel", BackgroundCurrentVersion),
             ("background failed check does not open the update panel", BackgroundUpdateFailure),
             ("new versions prompt once while dismissed versions stay quiet", BackgroundUpdatePrompt),
+            ("slow game reads are shared by concurrent refreshes", SlowRefreshCoalesces),
+            ("minimized and hidden windows pause polling and restore immediately", MinimizedRefreshPauses),
+            ("missing and unsupported games use slower polling", DisconnectedRefreshBacksOff),
+            ("closing during a read defers disposal without updating the window", ClosingRefreshDefersDisposal),
+            ("applying during a read refreshes the resulting environment", PostWriteRefreshIsFresh),
         ];
 
         var failures = 0;
@@ -427,7 +432,7 @@ internal static partial class Program
         public Fixture(bool useMinimumSize = false)
         {
             _updateClient = new HttpClient(UpdateHandler);
-            Window = new MainWindow([], new UpdateService(_updateClient, _updateDirectory, new Version(1, 1, 4)));
+            Window = new MainWindow([], new UpdateService(_updateClient, _updateDirectory, new Version(1, 1, 5)));
             Service = GameTimeService.Latest;
             if (useMinimumSize)
             {

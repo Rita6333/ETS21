@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 
 namespace ETS2DayNightModern;
 
@@ -18,7 +19,7 @@ public readonly record struct GameState(
 
 public readonly record struct OperationResult(bool Success, string Message);
 
-public sealed class GameTimeService
+public sealed class GameTimeService : IDisposable
 {
     public readonly record struct GameLayout(
         nuint GameObjectRva,
@@ -32,6 +33,8 @@ public sealed class GameTimeService
     private const uint ImageScnMemExecute = 0x20000000;
     private const uint MaxScanSectionBytes = 64 * 1024 * 1024;
     private const int ErrorAccessDenied = 5;
+    private const uint WaitTimeout = 258;
+    private static readonly TimeSpan FailedScanRetryDelay = TimeSpan.FromSeconds(15);
 
     private static readonly byte[] Original = { 0x44, 0x8B, 0x83, 0x80, 0x3E, 0x00, 0x00 };
     private static readonly byte[] RefreshPostAnchor = { 0x4C, 0x8D, 0x93, 0xAC, 0x3E, 0x00, 0x00 };
@@ -50,46 +53,116 @@ public sealed class GameTimeService
     };
 
     private readonly object _cacheLock = new();
+    private readonly object _probeLock = new();
+    private readonly TimeProvider _timeProvider;
+    private SafeProcessHandle? _processHandle;
+    private uint _processPid;
+    private nint _processBase;
+    private uint _processSize;
+    private bool _disposed;
     private uint _cachedPid;
     private nint _cachedBase;
     private uint _cachedSize;
     private GameLayout _cachedLayout;
+    private uint _failedPid;
+    private nint _failedBase;
+    private uint _failedSize;
+    private long _failedScanTimestamp;
+    private bool _hasFailedScan;
+
+    public GameTimeService() : this(TimeProvider.System) { }
+
+    internal GameTimeService(TimeProvider timeProvider) => _timeProvider = timeProvider;
 
     public GameState Probe()
     {
         if (!OperatingSystem.IsWindows()) return GameState.Empty;
-        var pid = FindProcessId();
-        if (pid == 0) return GameState.Empty;
-        if (!FindModuleInfo(pid, out var baseAddress, out var moduleSize, out var moduleAccessDenied) ||
-            baseAddress == 0)
+        // Holding the read-only process handle keeps its identity stable even
+        // when Windows later reuses a PID. The executable's module cannot unload
+        // while that process is alive, so snapshots are needed only on connect.
+        lock (_probeLock)
         {
-            return new GameState(true, false, pid, 0, -1, -1, 0, moduleAccessDenied);
-        }
-
-        var handle = OpenProcess(ProcessAccess.QueryLimitedInformation | ProcessAccess.VmRead, false, pid);
-        if (handle == 0)
-            handle = OpenProcess(ProcessAccess.QueryInformation | ProcessAccess.VmRead, false, pid);
-        if (handle == 0)
-        {
-            var denied = Marshal.GetLastWin32Error() == ErrorAccessDenied;
-            return new GameState(true, false, pid, baseAddress, -1, -1, 0, denied);
-        }
-
-        try
-        {
-            if (!TryResolveLayout(handle, (nuint)baseAddress, moduleSize, pid,
-                                  out var layout, out var environmentMinute))
+            if (_disposed) return GameState.Empty;
+            if (_processHandle is not null && WaitForSingleObject(_processHandle, 0) != WaitTimeout)
+                ResetProcess();
+            if (_processHandle is null)
             {
-                return new GameState(true, false, pid, baseAddress, -1, -1, 0, false);
+                var pid = FindProcessId();
+                if (pid == 0) return GameState.Empty;
+                var handle = OpenProcess(ProcessAccess.QueryLimitedInformation | ProcessAccess.VmRead |
+                                         ProcessAccess.Synchronize, false, pid);
+                if (handle == 0)
+                    handle = OpenProcess(ProcessAccess.QueryInformation | ProcessAccess.VmRead |
+                                         ProcessAccess.Synchronize, false, pid);
+                var canCacheSession = handle != 0;
+                // A restrictive game process ACL may allow memory reads but
+                // deny SYNCHRONIZE. Retain the original per-probe behavior in
+                // that case instead of treating a readable game as inaccessible.
+                if (handle == 0)
+                    handle = OpenProcess(ProcessAccess.QueryLimitedInformation | ProcessAccess.VmRead, false, pid);
+                if (handle == 0)
+                    handle = OpenProcess(ProcessAccess.QueryInformation | ProcessAccess.VmRead, false, pid);
+                if (handle == 0)
+                    return new GameState(true, false, pid, 0, -1, -1, 0,
+                        Marshal.GetLastWin32Error() == ErrorAccessDenied);
+
+                var process = new SafeProcessHandle(handle, ownsHandle: true);
+                if (!FindModuleInfo(pid, out var baseAddress, out var moduleSize, out var accessDenied) ||
+                    baseAddress == 0 || (canCacheSession && WaitForSingleObject(process, 0) != WaitTimeout))
+                {
+                    process.Dispose();
+                    return new GameState(true, false, pid, 0, -1, -1, 0, accessDenied);
+                }
+                if (!canCacheSession)
+                {
+                    using (process)
+                        return ReadState(handle, pid, baseAddress, moduleSize);
+                }
+                _processHandle = process;
+                _processPid = pid;
+                _processBase = baseAddress;
+                _processSize = moduleSize;
             }
 
-            var gameMinute = layout.GameObjectRva != 0
-                ? ReadWorldMinute(handle, (nuint)baseAddress, layout.GameObjectRva)
-                : -1;
-            return new GameState(true, true, pid, baseAddress, gameMinute, environmentMinute,
-                                 layout.EnvironmentRefreshRva, false);
+            return ReadState(_processHandle.DangerousGetHandle(), _processPid, _processBase, _processSize);
         }
-        finally { CloseHandle(handle); }
+    }
+
+    private GameState ReadState(nint handle, uint pid, nint baseAddress, uint moduleSize)
+    {
+        if (!TryResolveLayout(handle, (nuint)baseAddress, moduleSize, pid,
+                              out var layout, out var environmentMinute))
+            return new GameState(true, false, pid, baseAddress, -1, -1, 0, false);
+
+        var gameMinute = layout.GameObjectRva != 0
+            ? ReadWorldMinute(handle, (nuint)baseAddress, layout.GameObjectRva)
+            : -1;
+        return new GameState(true, true, pid, baseAddress, gameMinute, environmentMinute,
+                             layout.EnvironmentRefreshRva, false);
+    }
+
+    public void Dispose()
+    {
+        lock (_probeLock)
+        {
+            _disposed = true;
+            ResetProcess();
+        }
+    }
+
+    private void ResetProcess()
+    {
+        _processHandle?.Dispose();
+        _processHandle = null;
+        _processPid = 0;
+        _processBase = 0;
+        _processSize = 0;
+        lock (_cacheLock)
+        {
+            _cachedPid = 0;
+            _cachedLayout = default;
+            _hasFailedScan = false;
+        }
     }
 
     public OperationResult Apply(GameState state, int minute)
@@ -179,18 +252,26 @@ public sealed class GameTimeService
             return true;
         }
 
+        lock (_cacheLock)
+        {
+            // Unsupported or temporarily unreadable images must not allocate
+            // and rescan tens of megabytes on every timer tick. A validated
+            // cached refresh site above still recovers immediately.
+            if (_hasFailedScan && _failedPid == pid && _failedBase == (nint)baseAddress &&
+                _failedSize == moduleSize &&
+                _timeProvider.GetElapsedTime(_failedScanTimestamp) < FailedScanRetryDelay)
+            {
+                layout = default;
+                environmentMinute = -1;
+                return false;
+            }
+        }
+
         // Minor game updates can move the world-time global while leaving the
         // environment patch at the same RVA. Resolve both from the image before
         // falling back to historical offsets, then cache the resolved addresses.
         // A temporarily empty world pointer must not trigger a scan every tick.
-        if (moduleSize >= 0x1000 &&
-            ReadExact(handle, baseAddress, 0x1000, out var header) &&
-            TryScanImageLayout(
-                header,
-                moduleSize,
-                (rva, size) => ReadExact(handle, baseAddress + rva, size, out var sec) ? sec : null,
-                out var scanned,
-                out environmentMinute))
+        if (TryScanProcessImage(handle, baseAddress, moduleSize, out var scanned, out environmentMinute))
         {
             CacheLayout(pid, (nint)baseAddress, moduleSize, scanned);
             layout = scanned;
@@ -212,7 +293,26 @@ public sealed class GameTimeService
 
         layout = default;
         environmentMinute = -1;
+        lock (_cacheLock)
+        {
+            _failedPid = pid;
+            _failedBase = (nint)baseAddress;
+            _failedSize = moduleSize;
+            _failedScanTimestamp = _timeProvider.GetTimestamp();
+            _hasFailedScan = true;
+        }
         return false;
+    }
+
+    private static bool TryScanProcessImage(nint handle, nuint baseAddress, uint moduleSize,
+        out GameLayout layout, out int environmentMinute)
+    {
+        layout = default;
+        environmentMinute = -1;
+        return moduleSize >= 0x1000 && ReadExact(handle, baseAddress, 0x1000, out var header) &&
+            TryScanImageLayout(header, moduleSize,
+                (rva, size) => ReadExact(handle, baseAddress + rva, size, out var section) ? section : null,
+                out layout, out environmentMinute);
     }
 
     private void CacheLayout(uint pid, nint baseAddress, uint moduleSize, GameLayout layout)
@@ -223,6 +323,7 @@ public sealed class GameTimeService
             _cachedBase = baseAddress;
             _cachedSize = moduleSize;
             _cachedLayout = layout;
+            _hasFailedScan = false;
         }
     }
 
@@ -231,9 +332,10 @@ public sealed class GameTimeService
     {
         environmentMinute = -1;
         var readLength = requirePostAnchor ? 14 : 7;
-        if (!ReadExact(handle, address, readLength, out var bytes)) return false;
-        if (!TryParseRefreshCode(bytes.AsSpan(0, 7), out environmentMinute)) return false;
-        return !requirePostAnchor || bytes.AsSpan(7, 7).SequenceEqual(RefreshPostAnchor);
+        Span<byte> bytes = stackalloc byte[14];
+        if (!ReadInto(handle, address, bytes[..readLength])) return false;
+        if (!TryParseRefreshCode(bytes[..7], out environmentMinute)) return false;
+        return !requirePostAnchor || bytes.Slice(7, 7).SequenceEqual(RefreshPostAnchor);
     }
 
     public static bool TryScanImageLayout(
@@ -342,14 +444,16 @@ public sealed class GameTimeService
 
     private static int ReadWorldMinute(nint handle, nuint baseAddress, nuint gameObjectRva)
     {
-        if (!ReadExact(handle, baseAddress + gameObjectRva, IntPtr.Size, out var objectBytes)) return -1;
-        var objectAddress = IntPtr.Size == 8 ? BitConverter.ToUInt64(objectBytes) : BitConverter.ToUInt32(objectBytes);
-        if (objectAddress == 0 || !ReadExact(handle, (nuint)objectAddress + EnvironmentOffset,
-                                               IntPtr.Size, out var environmentBytes)) return -1;
-        var environmentAddress = IntPtr.Size == 8 ? BitConverter.ToUInt64(environmentBytes) : BitConverter.ToUInt32(environmentBytes);
-        if (environmentAddress == 0 || !ReadExact(handle, (nuint)environmentAddress + WorldTimeOffset,
-                                                    4, out var minuteBytes)) return -1;
-        return (int)(BitConverter.ToUInt32(minuteBytes) % DayMinutes);
+        Span<byte> bytes = stackalloc byte[IntPtr.Size];
+        if (!ReadInto(handle, baseAddress + gameObjectRva, bytes)) return -1;
+        var objectAddress = IntPtr.Size == 8 ? BinaryPrimitives.ReadUInt64LittleEndian(bytes)
+                                          : BinaryPrimitives.ReadUInt32LittleEndian(bytes);
+        if (objectAddress == 0 || !ReadInto(handle, (nuint)objectAddress + EnvironmentOffset, bytes)) return -1;
+        var environmentAddress = IntPtr.Size == 8 ? BinaryPrimitives.ReadUInt64LittleEndian(bytes)
+                                               : BinaryPrimitives.ReadUInt32LittleEndian(bytes);
+        if (environmentAddress == 0 ||
+            !ReadInto(handle, (nuint)environmentAddress + WorldTimeOffset, bytes[..4])) return -1;
+        return (int)(BinaryPrimitives.ReadUInt32LittleEndian(bytes) % DayMinutes);
     }
 
     private static byte[] MakePatch(int minute)
@@ -423,8 +527,12 @@ public sealed class GameTimeService
     private static bool ReadExact(nint process, nuint address, int size, out byte[] bytes)
     {
         bytes = new byte[size];
-        return ReadProcessMemory(process, (nint)address, bytes, size, out var read) && read == size;
+        return ReadInto(process, address, bytes);
     }
+
+    private static bool ReadInto(nint process, nuint address, Span<byte> bytes) =>
+        !bytes.IsEmpty && ReadProcessMemory(process, (nint)address,
+            ref MemoryMarshal.GetReference(bytes), (nuint)bytes.Length, out var read) && read == (nuint)bytes.Length;
 
     private static bool WriteBytes(nint process, nuint address, byte[] bytes)
     {
@@ -483,6 +591,7 @@ public sealed class GameTimeService
         VmRead = 0x0010,
         VmWrite = 0x0020,
         VmOperation = 0x0008,
+        Synchronize = 0x00100000,
     }
     [Flags] private enum SnapshotFlags : uint { Process = 0x2, Thread = 0x4, Module = 0x8, Module32 = 0x10 }
 
@@ -538,7 +647,9 @@ public sealed class GameTimeService
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(nint handle);
     [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool ReadProcessMemory(nint process, nint address, byte[] buffer, int size, out int read);
+    private static extern uint WaitForSingleObject(SafeProcessHandle handle, uint milliseconds);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool ReadProcessMemory(nint process, nint address, ref byte buffer, nuint size, out nuint read);
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool WriteProcessMemory(nint process, nint address, byte[] buffer, int size, out int written);
     [DllImport("kernel32.dll", SetLastError = true)]
